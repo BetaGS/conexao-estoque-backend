@@ -58,9 +58,29 @@ export async function login(req, res) {
     { expiresIn: '7d' }
   );
 
+  // 1. Procura primeiro se o usuário é criador/gerente de alguma loja
+  let userStore = Array.isArray(db.stores)
+    ? db.stores.find(s => s.createdBy === user.id || s.managerId === user.id)
+    : null;
+  let userRole = userStore ? 'Gerente' : null;
+  let membershipStatus = userStore ? 'approved' : null;
+
+  // 2. Se não for criador, procura vínculos de equipe em memberships
+  if (!userStore && Array.isArray(db.memberships)) {
+    const membership = db.memberships.find(m => m.userId === user.id);
+    if (membership) {
+      userStore = db.stores.find(s => s.id === membership.storeId) || null;
+      userRole = membership.role;
+      membershipStatus = membership.status; // 'approved' ou 'pending'
+    }
+  }
+
   return res.json({
     user: { id: user.id, name: user.name, nickname: user.nickname, email: user.email },
-    token
+    token,
+    store: userStore,
+    role: userRole,
+    membershipStatus: membershipStatus,
   });
 }
 
@@ -83,6 +103,20 @@ export async function deleteAccount(req, res) {
     // Remove associações de equipe/loja se a tabela existir
     if (Array.isArray(db.memberships)) {
       db.memberships = db.memberships.filter(m => m.userId !== userId);
+    }
+
+    // Se o usuário era dono de loja, remove a loja e produtos vinculados
+    if (Array.isArray(db.stores)) {
+      const storeOwned = db.stores.find(s => s.createdBy === userId || s.managerId === userId);
+      if (storeOwned) {
+        db.stores = db.stores.filter(s => s.id !== storeOwned.id);
+        if (Array.isArray(db.products)) {
+          db.products = db.products.filter(p => p.storeId !== storeOwned.id);
+        }
+        if (Array.isArray(db.orders)) {
+          db.orders = db.orders.filter(o => o.storeId !== storeOwned.id);
+        }
+      }
     }
 
     return res.json({ message: 'Conta excluída definitivamente com sucesso.' });
