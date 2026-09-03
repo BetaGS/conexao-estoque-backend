@@ -1,0 +1,156 @@
+import { db } from '../config/database.js';
+
+// 1. Criar uma nova loja (Usuário criador se torna o Gerente aprovado)
+export function createStore(req, res) {
+  const { name, allowedSizes } = req.body;
+  const userId = req.user.id;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'O nome da loja é obrigatório.' });
+  }
+
+  const storeCode = `LOJA-${Math.floor(1000 + Math.random() * 9000)}`;
+  const newStore = {
+    id: `STORE-${Date.now().toString().slice(-4)}`,
+    name: name.trim(),
+    code: storeCode,
+    allowedSizes: allowedSizes || ['P', 'M', 'G'],
+    ownerId: userId,
+    createdAt: new Date().toISOString(),
+  };
+
+  db.stores.push(newStore);
+
+  // Cadastra o criador como membro Gerente aprovado
+  const ownerMembership = {
+    id: `MEM-${Date.now().toString().slice(-4)}`,
+    storeId: newStore.id,
+    userId: userId,
+    role: 'Gerente',
+    status: 'approved',
+  };
+  db.members.push(ownerMembership);
+
+  return res.status(201).json({
+    store: newStore,
+    role: 'Gerente',
+    membershipStatus: 'approved',
+  });
+}
+
+// 2. Solicitar entrada em uma loja existente via código
+export function joinStoreRequest(req, res) {
+  const { code, requestedRole } = req.body;
+  const userId = req.user.id;
+
+  if (!code) {
+    return res.status(400).json({ error: 'Informe o código da loja.' });
+  }
+
+  const store = db.stores.find((s) => s.code.toUpperCase() === code.trim().toUpperCase());
+  if (!store) {
+    return res.status(404).json({ error: 'Loja não encontrada com esse código.' });
+  }
+
+  // Verifica se já é membro ou já tem solicitação pendente
+  const existingMember = db.members.find(
+    (m) => m.storeId === store.id && m.userId === userId
+  );
+
+  if (existingMember) {
+    if (existingMember.status === 'pending') {
+      return res.status(400).json({ error: 'Você já possui uma solicitação pendente nesta loja.' });
+    }
+    return res.status(400).json({ error: 'Você já é membro ativo desta loja.' });
+  }
+
+  const newMembership = {
+    id: `MEM-${Date.now().toString().slice(-4)}`,
+    storeId: store.id,
+    userId: userId,
+    role: requestedRole || 'Vendedor',
+    status: 'pending', // Aguarda aprovação do gerente
+    createdAt: new Date().toISOString(),
+  };
+
+  db.members.push(newMembership);
+
+  return res.status(201).json({
+    store,
+    role: newMembership.role,
+    membershipStatus: 'pending',
+    message: 'Solicitação de entrada enviada com sucesso ao gerente.',
+  });
+}
+
+// 3. Listar membros ativos e solicitações pendentes (Apenas Gerente)
+export function getStoreMembers(req, res) {
+  const { storeId } = req.params;
+  const userId = req.user.id;
+
+  // Validação: checar se quem está chamando é o gerente da loja
+  const isManager = db.members.some(
+    (m) => m.storeId === storeId && m.userId === userId && m.role === 'Gerente' && m.status === 'approved'
+  );
+
+  if (!isManager) {
+    return res.status(403).json({ error: 'Acesso restrito apenas para o Gerente da loja.' });
+  }
+
+  const allStoreMemberships = db.members.filter((m) => m.storeId === storeId);
+
+  // Mapeia os dados do usuário para cada membership
+  const populated = allStoreMemberships.map((m) => {
+    const user = db.users.find((u) => u.id === m.userId);
+    return {
+      membershipId: m.id,
+      userId: m.userId,
+      name: user?.name || 'Colaborador',
+      nickname: user?.nickname || '@usuario',
+      email: user?.email || '',
+      role: m.role,
+      status: m.status,
+    };
+  });
+
+  const activeEmployees = populated.filter((m) => m.status === 'approved');
+  const pendingRequests = populated.filter((m) => m.status === 'pending');
+
+  return res.json({
+    activeEmployees,
+    pendingRequests,
+  });
+}
+
+// 4. Aprovar ou recusar solicitação de colaborador (Apenas Gerente)
+export function handleMembershipRequest(req, res) {
+  const { membershipId } = req.params;
+  const { action, role } = req.body; // action: 'approve' | 'reject'
+  const userId = req.user.id;
+
+  const membership = db.members.find((m) => m.id === membershipId);
+  if (!membership) {
+    return res.status(404).json({ error: 'Solicitação não encontrada.' });
+  }
+
+  // Verifica se o solicitante da requisição é gerente da loja
+  const isManager = db.members.some(
+    (m) => m.storeId === membership.storeId && m.userId === userId && m.role === 'Gerente' && m.status === 'approved'
+  );
+
+  if (!isManager) {
+    return res.status(403).json({ error: 'Apenas o Gerente pode aprovar ou rejeitar membros.' });
+  }
+
+  if (action === 'approve') {
+    membership.status = 'approved';
+    if (role) membership.role = role; // Permite trocar o cargo no momento da aprovação
+    return res.json({ message: 'Membro aprovado com sucesso!', membership });
+  } else if (action === 'reject') {
+    const index = db.members.findIndex((m) => m.id === membershipId);
+    db.members.splice(index, 1);
+    return res.json({ message: 'Solicitação recusada com sucesso.' });
+  }
+
+  return res.status(400).json({ error: 'Ação inválida. Use "approve" ou "reject".' });
+}
