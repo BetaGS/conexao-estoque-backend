@@ -38,7 +38,31 @@ export function createStore(req, res) {
   });
 }
 
-// 2. Solicitar entrada em uma loja existente via código
+// 2. Listar lojas criadas ou gerenciadas pelo usuário logado
+export function getMyStores(req, res) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autorizado.' });
+    }
+
+    // Identifica lojas onde o usuário é dono ou gerente aprovado
+    const managerStoreIds = (db.members || [])
+      .filter((m) => m.userId === userId && m.role === 'Gerente' && m.status === 'approved')
+      .map((m) => m.storeId);
+
+    const myStores = (db.stores || []).filter(
+      (s) => s.ownerId === userId || managerStoreIds.includes(s.id)
+    );
+
+    return res.json(myStores);
+  } catch (error) {
+    console.error('Erro ao listar lojas do usuário:', error);
+    return res.status(500).json({ error: 'Erro ao buscar suas lojas.' });
+  }
+}
+
+// 3. Solicitar entrada em uma loja existente via código
 export function joinStoreRequest(req, res) {
   const { code, requestedRole } = req.body;
   const userId = req.user.id;
@@ -83,7 +107,7 @@ export function joinStoreRequest(req, res) {
   });
 }
 
-// 3. Listar membros ativos e solicitações pendentes (Apenas Gerente)
+// 4. Listar membros ativos e solicitações pendentes (Apenas Gerente)
 export function getStoreMembers(req, res) {
   const { storeId } = req.params;
   const userId = req.user.id;
@@ -122,7 +146,7 @@ export function getStoreMembers(req, res) {
   });
 }
 
-// 4. Aprovar ou recusar solicitação de colaborador (Apenas Gerente)
+// 5. Aprovar ou recusar solicitação de colaborador (Apenas Gerente)
 export function handleMembershipRequest(req, res) {
   const { membershipId } = req.params;
   const { action, role } = req.body; // action: 'approve' | 'reject'
