@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { db } from '../config/database.js';
+import { db, saveDatabase } from '../config/database.js';
 
 export async function register(req, res) {
   const { name, nickname, email, password } = req.body;
@@ -26,6 +26,7 @@ export async function register(req, res) {
   };
 
   db.users.push(newUser);
+  saveDatabase();
 
   const token = jwt.sign(
     { id: newUser.id, nickname: newUser.nickname, email: newUser.email },
@@ -58,20 +59,20 @@ export async function login(req, res) {
     { expiresIn: '7d' }
   );
 
-  // 1. Procura primeiro se o usuário é criador/gerente de alguma loja
+  // 1. Verifica se o usuário é proprietário/gerente de alguma loja
   let userStore = Array.isArray(db.stores)
-    ? db.stores.find(s => s.createdBy === user.id || s.managerId === user.id)
+    ? db.stores.find(s => s.ownerId === user.id)
     : null;
   let userRole = userStore ? 'Gerente' : null;
   let membershipStatus = userStore ? 'approved' : null;
 
-  // 2. Se não for criador, procura vínculos de equipe em memberships
-  if (!userStore && Array.isArray(db.memberships)) {
-    const membership = db.memberships.find(m => m.userId === user.id);
+  // 2. Se não for proprietário, verifica na lista de membros (members)
+  if (!userStore && Array.isArray(db.members)) {
+    const membership = db.members.find(m => m.userId === user.id);
     if (membership) {
       userStore = db.stores.find(s => s.id === membership.storeId) || null;
       userRole = membership.role;
-      membershipStatus = membership.status; // 'approved' ou 'pending'
+      membershipStatus = membership.status;
     }
   }
 
@@ -97,31 +98,29 @@ export async function deleteAccount(req, res) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
 
-    // Remove o usuário da base
     db.users.splice(userIndex, 1);
 
-    // Remove associações de equipe/loja se a tabela existir
-    if (Array.isArray(db.memberships)) {
-      db.memberships = db.memberships.filter(m => m.userId !== userId);
+    if (Array.isArray(db.members)) {
+      db.members = db.members.filter(m => m.userId !== userId);
     }
 
-    // Se o usuário era dono de loja, remove a loja e produtos vinculados
     if (Array.isArray(db.stores)) {
-      const storeOwned = db.stores.find(s => s.createdBy === userId || s.managerId === userId);
-      if (storeOwned) {
-        db.stores = db.stores.filter(s => s.id !== storeOwned.id);
+      const ownedStore = db.stores.find(s => s.ownerId === userId);
+      if (ownedStore) {
+        db.stores = db.stores.filter(s => s.id !== ownedStore.id);
         if (Array.isArray(db.products)) {
-          db.products = db.products.filter(p => p.storeId !== storeOwned.id);
+          db.products = db.products.filter(p => p.storeId !== ownedStore.id);
         }
         if (Array.isArray(db.orders)) {
-          db.orders = db.orders.filter(o => o.storeId !== storeOwned.id);
+          db.orders = db.orders.filter(o => o.storeId !== ownedStore.id);
         }
       }
     }
 
-    return res.json({ message: 'Conta excluída definitivamente com sucesso.' });
+    saveDatabase();
+    return res.json({ message: 'Conta excluída com sucesso.' });
   } catch (error) {
     console.error('Erro ao excluir conta:', error);
-    return res.status(500).json({ error: 'Erro interno ao processar a exclusão da conta.' });
+    return res.status(500).json({ error: 'Erro interno ao excluir conta.' });
   }
 }

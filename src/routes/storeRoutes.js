@@ -10,7 +10,6 @@ import { authMiddleware } from '../middlewares/authMiddleware.js';
 
 const router = Router();
 
-// Todas as rotas de loja exigem estar logado
 router.use(authMiddleware);
 
 router.post('/', createStore);
