@@ -63,3 +63,31 @@ export async function login(req, res) {
     token
   });
 }
+
+export async function deleteAccount(req, res) {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Não autorizado.' });
+    }
+
+    const userIndex = db.users.findIndex(u => u.id === userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    // Remove o usuário da base
+    db.users.splice(userIndex, 1);
+
+    // Remove associações de equipe/loja se a tabela existir
+    if (Array.isArray(db.memberships)) {
+      db.memberships = db.memberships.filter(m => m.userId !== userId);
+    }
+
+    return res.json({ message: 'Conta excluída definitivamente com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao excluir conta:', error);
+    return res.status(500).json({ error: 'Erro interno ao processar a exclusão da conta.' });
+  }
+}
